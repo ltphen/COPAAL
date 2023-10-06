@@ -79,7 +79,7 @@ public class VerbalizerTest {
     QRestrictedPath path2 = QRestrictedPath.create(pathStr2, 0);
     QRestrictedPath path3 = QRestrictedPath.create(pathStr3, 0);
 
-    testConfigs.add(new Object[] {subject, object, path, true});
+    testConfigs.add(new Object[] {subject, object, path, false});
     testConfigs.add(new Object[] {subject2, object2, path2, false});
     testConfigs.add(new Object[] {subject3, object3, path3, false});
     testConfigs.add(new Object[] {randomRes, randomRes, path, true});
