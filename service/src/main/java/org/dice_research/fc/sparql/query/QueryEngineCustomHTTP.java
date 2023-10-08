@@ -177,6 +177,9 @@ public class QueryEngineCustomHTTP implements QueryExecution {
         }
         request.addHeader(HttpHeaders.CONTENT_TYPE, "application/x-www-form-urlencoded");
 
+        System.out.println(service + "?query=" + URLEncoder.encode(query.toString()) );
+
+
         if(timeout > 0) {
             RequestConfig config = RequestConfig.custom()
                     .setConnectTimeout(timeout)
