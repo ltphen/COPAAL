@@ -7,7 +7,9 @@ import java.util.*;
 
 import org.aksw.jena_sparql_api.core.QueryExecutionFactory;
 import org.aksw.jena_sparql_api.model.QueryExecutionFactoryModel;
+import org.aksw.jena_sparql_api.pagination.core.QueryExecutionFactoryPaginated;
 import org.apache.commons.math3.util.Pair;
+import org.apache.http.impl.client.HttpClients;
 import org.apache.jena.rdf.model.Model;
 import org.apache.jena.rdf.model.ModelFactory;
 
@@ -30,22 +32,25 @@ import org.dice_research.fc.paths.map.PropertyMapper;
 import org.dice_research.fc.paths.model.Path;
 import org.dice_research.fc.paths.model.PathElement;
 
+import org.dice_research.fc.paths.sampler.IPathSampler;
+import org.dice_research.fc.paths.sampler.QRestrictedPathSampler;
 import org.dice_research.fc.paths.scorer.ICountRetriever;
 import org.dice_research.fc.paths.scorer.NPMIBasedScorer;
 import org.dice_research.fc.paths.scorer.PNPMIBasedScorer;
 import org.dice_research.fc.paths.scorer.PreCalculationScorer;
 import org.dice_research.fc.paths.scorer.count.ApproximatingCountRetriever;
 import org.dice_research.fc.paths.scorer.count.PairCountRetriever;
+import org.dice_research.fc.paths.scorer.count.SPARQLBasedResultStreamingCountRetriever;
+import org.dice_research.fc.paths.scorer.count.TentrisBasedCountRetriever;
 import org.dice_research.fc.paths.scorer.count.decorate.CachingCountRetrieverDecorator;
-import org.dice_research.fc.paths.scorer.count.max.DefaultMaxCounter;
-import org.dice_research.fc.paths.scorer.count.max.HybridMaxCounter;
-import org.dice_research.fc.paths.scorer.count.max.MaxCounter;
-import org.dice_research.fc.paths.scorer.count.max.VirtualTypesMaxCounter;
+import org.dice_research.fc.paths.scorer.count.decorate.SaveInDBCountDecorator;
+import org.dice_research.fc.paths.scorer.count.max.*;
 import org.dice_research.fc.paths.search.PreProcessPathSearcher;
 import org.dice_research.fc.paths.search.SPARQLBasedSOPathSearcher;
 import org.dice_research.fc.paths.search.CachingPathSearcherDecorator;
 import org.dice_research.fc.paths.verbalizer.DefaultPathVerbalizer;
 import org.dice_research.fc.paths.verbalizer.IPathVerbalizer;
+import org.dice_research.fc.paths.verbalizer.MultiplePathVerbalizer;
 import org.dice_research.fc.paths.verbalizer.NoopVerbalizer;
 import org.dice_research.fc.sparql.filter.EqualsFilter;
 import org.dice_research.fc.sparql.filter.IRIFilter;
@@ -53,6 +58,8 @@ import org.dice_research.fc.sparql.filter.NamespaceFilter;
 import org.dice_research.fc.sparql.path.BGPBasedPathClauseGenerator;
 import org.dice_research.fc.sparql.path.IPathClauseGenerator;
 import org.dice_research.fc.sparql.path.PropPathBasedPathClauseGenerator;
+import org.dice_research.fc.sparql.query.IQueryValidator;
+import org.dice_research.fc.sparql.query.ListBaseQueryValidator;
 import org.dice_research.fc.sparql.query.QueryExecutionFactoryCustomHttp;
 import org.dice_research.fc.sparql.query.QueryExecutionFactoryCustomHttpTimeout;
 import org.dice_research.fc.sparql.restrict.TypeBasedRestriction;
@@ -68,6 +75,8 @@ import org.dice_research.fc.tentris.TentrisAdapter;
 import org.json.simple.JSONArray;
 import org.json.simple.JSONObject;
 import org.json.simple.parser.JSONParser;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.config.ConfigurableBeanFactory;
 import org.springframework.context.annotation.Bean;
@@ -75,6 +84,9 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.PropertySource;
 import org.springframework.context.annotation.Scope;
 import org.springframework.context.support.PropertySourcesPlaceholderConfigurer;
+import org.aksw.jena_sparql_api.core.QueryExecutionFactory;
+import org.aksw.jena_sparql_api.core.QueryExecutionFactoryBackQuery;
+import org.aksw.jena_sparql_api.http.QueryExecutionFactoryHttp;
 
 /**
  * Configuration class containing the variables present in the applications.properties file and the
@@ -84,12 +96,30 @@ import org.springframework.context.support.PropertySourcesPlaceholderConfigurer;
 @Configuration
 @PropertySource(value = "classpath:application.properties")
 public class Config {
-
+  private static final Logger LOGGER = LoggerFactory.getLogger(Config.class);
   /**
    * The SPARQL endpoint URL
    */
   @Value("${info.service.url.default:}")
   private String serviceURL;
+
+  /**
+   * show if sparql endpoint needs an authentication (true) or not (false)
+   */
+  @Value("${info.service.url.needAuthentication:}")
+  private String sparqlEndpointNeedAuthentication;
+
+  /**
+   *
+   */
+  @Value("${info.service.url.username:}")
+  private String sparqlEndpointUsername;
+
+  /**
+   * The SPARQL endpoint URL
+   */
+  @Value("${info.service.url.password:}")
+  private String sparqlEndpointPassword;
 
   /**
    * The SPARQL endpoint URL
@@ -132,6 +162,11 @@ public class Config {
   @Value("${copaal.factpreprocessor.ShouldUseBGPVirtualTypeRestriction}")
   private boolean ShouldUseBGPVirtualTypeRestriction;
 
+  /**
+   * This flag indicate that use BGPVirtualTypeRestriction if it is true
+   */
+  @Value("${dataset.sparql.foorbidLoop}")
+  private boolean foorbidLoop;
 
   /**
    * Path's maximum length
@@ -222,6 +257,18 @@ public class Config {
   @Value("${copaal.preprocess.addressOfMaxCountFile:}")
   private String addressOfMaxCountFile;
 
+  @Value("${copaal.graphName:}")
+  private String graphName;
+
+  @Value("${copaal.printTheExampleOfEachFoundedPath:}")
+  private String printTheExampleOfEachFoundedPath;
+
+  @Value("${copaal.invalidQueries:}")
+  private String invalidQueries;
+
+  @Value("${copaal.pathFilterThreshold}")
+  private double pathFilterThreshold;
+
   @Bean
   public static PropertySourcesPlaceholderConfigurer propertySourcesPlaceholderConfigurer() {
     return new PropertySourcesPlaceholderConfigurer();
@@ -234,10 +281,11 @@ public class Config {
    */
   @Bean
   public MetaPathsProcessor getMetaPathsProcessor(QueryExecutionFactory qef) {
-    switch (metaPaths.toLowerCase()) {
+    switch (metaPaths.toLowerCase().trim()) {
       case "estherpathprocessor":
         return new EstherPathProcessor(preprocessedPaths, qef);
       default:
+        LOGGER.info("Warning : it use default MetaPathProcessor");
         return new NoopPathProcessor(preprocessedPaths, qef);
     }
   }
@@ -253,12 +301,16 @@ public class Config {
    */
   @Bean
   public IFactChecker getFactChecker(FactPreprocessor factPreprocessor, IPathSearcher pathSearcher,
-      IPathScorer pathScorer, ScoreSummarist summarist, MetaPathsProcessor metaProcessor) {
+      IPathScorer pathScorer, ScoreSummarist summarist, MetaPathsProcessor metaProcessor, QueryExecutionFactory qef) {
+    boolean LogThePaths = false;
+    if(this.printTheExampleOfEachFoundedPath.toLowerCase().equals("true")){
+      LogThePaths = true;
+    }
     if (isPathsLoad) {
       return new ImportedFactChecker(factPreprocessor, pathSearcher, pathScorer, summarist,
-          metaProcessor);
+          metaProcessor, qef, LogThePaths, pathFilterThreshold, filteredProperties);
     } else {
-      return new PathBasedFactChecker(factPreprocessor, pathSearcher, pathScorer, summarist);
+      return new PathBasedFactChecker(factPreprocessor, pathSearcher, pathScorer, summarist, pathFilterThreshold, filteredProperties);
     }
   }
 
@@ -272,7 +324,7 @@ public class Config {
   public IPathSearcher getPathSearcher(QueryExecutionFactory qef, Collection<IRIFilter> filter,IMapper<Path, QRestrictedPath> mapper,
                                        IMapper<Pair<Property, Boolean>, PathElement> propertyElementMapper,ICountRetriever counterRetrieverClass,
                                        FactPreprocessor factPreprocessorClass, IPathScorer pathScorerClass, IPreProcessProvider preProcessProvider, TentrisAdapter adapter) {
-    switch (pathSearcher.toLowerCase()){
+    switch (pathSearcher.toLowerCase().trim()){
       case "loadsavedecorator" :
         String counterRetriever = counterRetrieverClass.getClass().getName();
         String factPreprocessor = factPreprocessorClass.getClass().getName();
@@ -281,6 +333,7 @@ public class Config {
       case "preprocess":
         return new PreProcessPathSearcher(preProcessProvider, adapter);
       default:
+        LOGGER.info("Warning : it use default Pathsearcher");
         return new SPARQLBasedSOPathSearcher(qef, maxLength, filter);
     }
   }
@@ -298,20 +351,47 @@ public class Config {
    * @return The desired {@link ICountRetriever} implementation.
    */
   @Bean
-  public ICountRetriever getCountRetriever(QueryExecutionFactory qef, MaxCounter maxCounter, IPathClauseGenerator pathClauseGenerator,IPreProcessProvider preProcessProvider) {
+  public ICountRetriever getCountRetriever(QueryExecutionFactory qef, MaxCounter maxCounter, IPathClauseGenerator pathClauseGenerator,IPreProcessProvider preProcessProvider, IQueryValidator queryValidator) {
     ICountRetriever countRetriever;
-    switch (counter.toLowerCase()) {
+    switch (counter.toLowerCase().trim()) {
       case "approximatingcountretriever":
-        countRetriever = new ApproximatingCountRetriever(qef, maxCounter);
+        countRetriever = new ApproximatingCountRetriever(qef, maxCounter, queryValidator);
         break;
       case "paircountretriever":
-        countRetriever = new PairCountRetriever(qef, maxCounter, pathClauseGenerator);
+        countRetriever = new PairCountRetriever(qef, maxCounter, pathClauseGenerator, queryValidator);
+        break;
+      case "paircountretrieverwithdb":
+        LOGGER.info("use caching for paircountretriever with this graphname"+graphName);
+        countRetriever = new PairCountRetriever(qef, maxCounter, pathClauseGenerator, queryValidator);
+        countRetriever = new SaveInDBCountDecorator(countRetriever, graphName);
         break;
       case "preprocess":
         countRetriever = new PreCalculationScorer(preProcessProvider);
         break;
+      case "tentris":
+        TentrisAdapter tentris = new TentrisAdapter(HttpClients.createDefault(), tentrisURL);
+        countRetriever = new TentrisBasedCountRetriever(tentris, new TentrisBasedMaxCounter(tentris), new BGPBasedPathClauseGenerator());
+
+/*        QueryExecutionFactory qef2 = new QueryExecutionFactoryCustomHttp(tentrisURL, false, typeOfQueryResult, false, sparqlEndpointUsername, sparqlEndpointPassword);
+        MaxCounter maxCounter2 = new HybridMaxCounter(qef2);
+        countRetriever = new PairCountRetriever(qef2, maxCounter2, pathClauseGenerator, queryValidator);*/
+        break;
+      case "tentriswithdb":
+        LOGGER.info("for tentris chaching");
+        TentrisAdapter tentris2 = new TentrisAdapter(HttpClients.createDefault(), tentrisURL);
+        countRetriever = new TentrisBasedCountRetriever(tentris2, new TentrisBasedMaxCounter(tentris2),
+                new BGPBasedPathClauseGenerator());
+        LOGGER.info("counter retriver is :"+countRetriever.getClass());
+        countRetriever  = new SaveInDBCountDecorator(countRetriever,graphName);
+        LOGGER.info("and then is counter retriver is :"+countRetriever.getClass());
+        break;
+      case "streamingcountretriever":
+        qef = new QueryExecutionFactoryPaginated(qef);
+        countRetriever = new SPARQLBasedResultStreamingCountRetriever(qef, maxCounter, queryValidator);
+          break;
       default:
-        countRetriever = new PairCountRetriever(qef, maxCounter, pathClauseGenerator);
+        LOGGER.info("Warning : it use default count retriever");
+        countRetriever = new PairCountRetriever(qef, maxCounter, pathClauseGenerator, queryValidator);
         break;
     }
     if (isCache) {
@@ -329,7 +409,7 @@ public class Config {
   public MaxCounter getMaxCounter(QueryExecutionFactory qef) {
     MaxCounter maxCounter;
 
-    switch (factPreprocessorType.toLowerCase()) {
+    switch (factPreprocessorType.toLowerCase().trim()) {
       case ("predicatefactory"):
         return new DefaultMaxCounter(qef);
       case ("virtualtypepredicatefactory"):
@@ -337,6 +417,7 @@ public class Config {
       case ("hybridpredicatefactory"):
         return new HybridMaxCounter(qef);
       default:
+        LOGGER.info("Warning : it use default Maxcounter");
         return new DefaultMaxCounter(qef);
     }
   }
@@ -347,12 +428,13 @@ public class Config {
    */
   @Bean
   public IPathScorer getPathScorer(ICountRetriever countRetriever) {
-    switch (scorer.toLowerCase()) {
+    switch (scorer.toLowerCase().trim()) {
       case "npmi":
         return new NPMIBasedScorer(countRetriever);
       case "pnpmi":
         return new PNPMIBasedScorer(countRetriever);
       default:
+        LOGGER.info("Warning : it use default path scorer");
         return new NPMIBasedScorer(countRetriever);
     }
   }
@@ -363,9 +445,11 @@ public class Config {
   @Bean
   public Collection<IRIFilter> getFilter() {
     List<IRIFilter> filters = new ArrayList<IRIFilter>();
+    LOGGER.info("there are "+ filteredProperties.length+" filtered properties");
     if(filteredProperties.length > 0) {
       filters.add(new EqualsFilter(filteredProperties));
     }
+    LOGGER.info("there are "+ namespaceFilters.length+" namespace filter");
     for (int i = 0; i < namespaceFilters.length; i++) {
       filters.add(new NamespaceFilter(namespaceFilters[i], false));
     }
@@ -380,10 +464,14 @@ public class Config {
   public QueryExecutionFactory getQueryExecutionFactory() {
     QueryExecutionFactory qef;
     if (filePath == null || filePath.isEmpty()) {
+      boolean isSparqlEndpointNeedAuthentication = false;
+      if(sparqlEndpointNeedAuthentication.trim().equals("true")){
+        isSparqlEndpointNeedAuthentication = true;
+      }
       if(isPostRequest.equalsIgnoreCase("post")) {
-        qef = new QueryExecutionFactoryCustomHttp(serviceURL, true, typeOfQueryResult);
+          qef = new QueryExecutionFactoryCustomHttp(serviceURL, true, typeOfQueryResult, isSparqlEndpointNeedAuthentication, sparqlEndpointUsername, sparqlEndpointPassword);
       }else{
-        qef = new QueryExecutionFactoryCustomHttp(serviceURL, false, typeOfQueryResult);
+        qef = new QueryExecutionFactoryCustomHttp(serviceURL, false, typeOfQueryResult, isSparqlEndpointNeedAuthentication, sparqlEndpointUsername, sparqlEndpointPassword);
       }
     } else {
       Model model = ModelFactory.createDefaultModel();
@@ -398,17 +486,18 @@ public class Config {
    * @return The {@link FactPreprocessor} object dependent on whether we want virtual types or not
    */
   @Bean
-  public FactPreprocessor getPreprocessor(QueryExecutionFactory qef) {
-    switch (factPreprocessorType.toLowerCase()) {
+  public FactPreprocessor getPreprocessor(QueryExecutionFactory qef,Collection<IRIFilter> filters) {
+    switch (factPreprocessorType.toLowerCase().trim()) {
       case ("predicatefactory"):
         return new PredicateFactory(qef);
       case ("virtualtypepredicatefactory"):
         return new VirtualTypePredicateFactory();
       case ("hybridpredicatefactory"):
-        return new HybridPredicateFactory(qef,ShouldUseBGPVirtualTypeRestriction);
+        return new HybridPredicateFactory(qef,ShouldUseBGPVirtualTypeRestriction,filters);
       case ("hybridpredicatetentrisfactory"):
         return new HybridPredicateTentrisFactory(allPredicates("collected_predicates.json"));
       default:
+        LOGGER.info("Warning : it use default preprocessor");
         return new PredicateFactory(qef);
     }
   }
@@ -459,7 +548,7 @@ public class Config {
    */
   @Bean
   public ScoreSummarist getSummarist() {
-    switch (summaristType.toLowerCase()) {
+    switch (summaristType.toLowerCase().trim()) {
       case "adaptedrootmeansquaresummarist":
         return new AdaptedRootMeanSquareSummarist();
       case "cubicmeansummarist":
@@ -475,6 +564,7 @@ public class Config {
       case "squaredaveragesummarist":
         return new SquaredAverageSummarist();
       default:
+        LOGGER.info("Warning : it use default score summarist");
         return new OriginalSummarist();
     }
   }
@@ -520,12 +610,14 @@ public class Config {
    */
   @Bean
   IPathClauseGenerator getPathClauseGenerator(){
-    switch (pathClauseGeneratorType.toLowerCase()){
+    switch (pathClauseGeneratorType.toLowerCase().trim()){
       case("proppathbasedpathclausegenerator"):
         return new PropPathBasedPathClauseGenerator();
       case ("bgpbasedpathclausegenerator"):
-        return new BGPBasedPathClauseGenerator();
+        return new BGPBasedPathClauseGenerator(foorbidLoop);
+        // TODO add with no loop
       default:
+        LOGGER.info("Warning : it use default path generator");
         return new PropPathBasedPathClauseGenerator();
     }
   }
@@ -539,8 +631,31 @@ public class Config {
     File maxCountFile = new File(addressOfMaxCountFile);*/
     List<Predicate> validPredicates = allValidPredicates();
     //return new PreProcessProvider(pathInstancesCountFile, predicateInstancesCountFile, coOccurrenceCountFile, maxCountFile, preProcessPathNPMIThreshold, validPredicates);
-    System.out.println("serviceURL is :"+serviceURL);
+    LOGGER.info("serviceURL is :"+serviceURL);
     return new PreProcessProvider(addressOfPathInstancesCountFile, addressOfPredicateInstancesCountFile, addressOfCoOccurrenceCountFile, addressOfMaxCountFile, preProcessPathNPMIThreshold, validPredicates);
+  }
+
+  @Bean
+  IQueryValidator getQueryValidator(){
+    List<String> invalidQueries = extractInvalidQueries();
+    IQueryValidator validator = new ListBaseQueryValidator(invalidQueries);
+    return validator;
+  }
+
+  @Bean
+  IPathSampler getPathSampler(QueryExecutionFactory qef){
+    return new QRestrictedPathSampler(qef);
+  }
+
+  private List<String> extractInvalidQueries() {
+    List<String> invalidQ = new ArrayList<>();
+    String[] qq = invalidQueries.split(",");
+    for (String q:qq) {
+      invalidQ.add(q);
+      LOGGER.info(q);
+    }
+    LOGGER.info("loads "+ invalidQ.size()+" invalid queries");
+    return invalidQ;
   }
 
   private List<Predicate> allValidPredicates() {
@@ -555,7 +670,7 @@ public class Config {
   @Scope(ConfigurableBeanFactory.SCOPE_PROTOTYPE)
   public IPathVerbalizer getVerbalizer(QueryExecutionFactory qef, RequestParameters details) {
     if (details.isVerbalize()) {
-      return new DefaultPathVerbalizer(qef);
+      return new MultiplePathVerbalizer(qef);
     } else {
       return new NoopVerbalizer();
     }

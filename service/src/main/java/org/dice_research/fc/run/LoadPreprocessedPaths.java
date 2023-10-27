@@ -1,5 +1,6 @@
 package org.dice_research.fc.run;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import org.aksw.jena_sparql_api.core.QueryExecutionFactory;
 import org.apache.jena.rdf.model.ResourceFactory;
@@ -14,6 +15,7 @@ import org.dice_research.fc.paths.scorer.count.max.DefaultMaxCounter;
 import org.dice_research.fc.paths.search.SPARQLBasedSOPathSearcher;
 import org.dice_research.fc.sparql.filter.EqualsFilter;
 import org.dice_research.fc.sparql.filter.NamespaceFilter;
+import org.dice_research.fc.sparql.query.ListBaseQueryValidator;
 import org.dice_research.fc.sparql.query.QueryExecutionFactoryCustomHttp;
 import org.dice_research.fc.sparql.query.QueryExecutionFactoryCustomHttpTimeout;
 import org.dice_research.fc.sum.FixedSummarist;
@@ -32,7 +34,7 @@ public class LoadPreprocessedPaths {
 
   public static void main(String[] args) {
     QueryExecutionFactory qef =
-        new QueryExecutionFactoryCustomHttp("https://synthg-fact.dice-research.org/sparql",false,"json");// "https://dbpedia.org/sparql");
+        new QueryExecutionFactoryCustomHttp("https://synthg-fact.dice-research.org/sparql",false,"json",false,"","");// "https://dbpedia.org/sparql");
     qef = new QueryExecutionFactoryCustomHttpTimeout(qef, 30000);
 
     ImportedFactChecker checker = new ImportedFactChecker(new PredicateFactory(qef),
@@ -40,8 +42,8 @@ public class LoadPreprocessedPaths {
             Arrays.asList(new NamespaceFilter("http://dbpedia.org/ontology", false),
                 new EqualsFilter(FILTERED_PROPERTIES))),
         new NPMIBasedScorer(new CachingCountRetrieverDecorator(
-            new ApproximatingCountRetriever(qef, new DefaultMaxCounter(qef)))),
-        new FixedSummarist(), new EstherPathProcessor("./paths/", qef));
+            new ApproximatingCountRetriever(qef, new DefaultMaxCounter(qef), new ListBaseQueryValidator(new ArrayList<>())))),
+        new FixedSummarist(), new EstherPathProcessor("./paths/", qef), qef, false,0.0, null);
 
     FactCheckingResult result =
         checker.check(ResourceFactory.createResource("http://dbpedia.org/resource/Tay_Zonday"),

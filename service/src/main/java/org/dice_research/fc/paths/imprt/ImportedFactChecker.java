@@ -3,6 +3,10 @@ package org.dice_research.fc.paths.imprt;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.stream.Collectors;
+
+import org.aksw.jena_sparql_api.core.QueryExecutionFactory;
+import org.apache.jena.query.QueryExecution;
+import org.apache.jena.query.ResultSet;
 import org.apache.jena.rdf.model.Property;
 import org.apache.jena.rdf.model.Resource;
 import org.apache.jena.rdf.model.ResourceFactory;
@@ -30,39 +34,47 @@ import org.springframework.stereotype.Component;
 @Component
 public class ImportedFactChecker extends PathBasedFactChecker {
 
+    private boolean printTheExampleOfEachFoundedPath;
   private static final Logger LOGGER = LoggerFactory.getLogger(ImportedFactChecker.class);
 
   /**
    * The imported facts processor
    */
   protected MetaPathsProcessor metaPreprocessor;
-
+    protected QueryExecutionFactory qef;
 
   @Autowired
   public ImportedFactChecker(FactPreprocessor factPreprocessor, IPathSearcher pathSearcher,
-      IPathScorer pathScorer, ScoreSummarist summarist, MetaPathsProcessor metaPreprocessor) {
-    super(factPreprocessor, pathSearcher, pathScorer, summarist);
+                             IPathScorer pathScorer, ScoreSummarist summarist, MetaPathsProcessor metaPreprocessor, QueryExecutionFactory qef, boolean printTheExampleOfEachFoundedPath, double pathFilterThreshold, String[] propertyFilter) {
+    super(factPreprocessor, pathSearcher, pathScorer, summarist,pathFilterThreshold, propertyFilter);
     this.metaPreprocessor = metaPreprocessor;
+    this.qef = qef;
+    this.printTheExampleOfEachFoundedPath = printTheExampleOfEachFoundedPath;
   }
 
   @Override
   public FactCheckingResult check(Resource subject, Property predicate, Resource object) {
-      LOGGER.trace(" -------------  START OF FACT CHECKING @ ImportedFactChecker-------------");
-      LOGGER.trace(" -------------  Start to preprocess the data  -------------");
+      LOGGER.info(" -------------  START OF FACT CHECKING @ ImportedFactChecker-------------");
+      LOGGER.info(" -------------  Start to preprocess the data  -------------");
+      LOGGER.info("subject is " + subject);
+      LOGGER.info("predicate is " +  predicate);
+      LOGGER.info("object is "+object);
       Statement fact = ResourceFactory.createStatement(subject, predicate, object);
+      LOGGER.info("fact is"+fact);
       Predicate preparedPredicate = factPreprocessor.generatePredicate(fact);
-      LOGGER.trace(" -------------  Preprocess the data Done   -------------");
+      LOGGER.info("preparedPredicate"+preparedPredicate);
+      LOGGER.info(" -------------  Preprocess the data Done   -------------");
 
       // pre-process paths in file
       Collection<QRestrictedPath> paths = metaPreprocessor.processMetaPaths(fact);
 
       // search for paths if preprocessed paths can't be found
       if (paths == null) {
-        LOGGER.warn("Couldn't find the files for paths of {}. Switching to path search.",
+        LOGGER.info("Couldn't find the files for paths of {}. Switching to path search.",
                 predicate.getURI());
-        LOGGER.trace(" -------------  Start to get a list of potential paths  -------------");
+        LOGGER.info(" -------------  Start to get a list of potential paths  -------------");
         paths = pathSearcher.search(subject, preparedPredicate, object);
-        LOGGER.trace(" -------------  Get a list of potential paths Done  -------------");
+        LOGGER.info(" -------------  Get a list of potential paths Done  -------------");
       }
 
       // return default score if no paths are found
@@ -73,8 +85,32 @@ public class ImportedFactChecker extends PathBasedFactChecker {
       }
 
       // calculate scores and verbalize if needed only
-      LOGGER.trace(" -------------  Start to filter and Score  -------------");
-      LOGGER.debug("number of paths before filtering is {}",paths.size());
+      LOGGER.info(" -------------  Start to filter and Score  -------------");
+      LOGGER.info("number of paths before filtering is {}",paths.size());
+
+
+          for (QRestrictedPath p : paths) {
+              LOGGER.info(p.toStringWithTag());
+              if(printTheExampleOfEachFoundedPath) {
+                  String qfge = p.queryForGetAnExample();
+                  try (QueryExecution qe = qef.createQueryExecution(qfge)) {
+                      ResultSet rs = qe.execSelect();
+                      if (rs != null) {
+                          if (rs.hasNext()) {
+                              LOGGER.info(rs.next().toString());
+                          }
+                      } else {
+                          LOGGER.error("rs is null for this query :" + qfge);
+                      }
+                  } catch (Exception ex) {
+                      LOGGER.error(ex.getMessage());
+                      ex.printStackTrace();
+                  }
+              }
+              LOGGER.info("-_-_-_-_-_-_-");
+          }
+
+          LOGGER.info("pathfilter is "+pathFilter.getClass().getName());
       paths = paths.parallelStream().filter(pathFilter).map(p -> {
         if (Double.isNaN(p.getScore())) {
           LOGGER.warn("Couldn't find scores for paths of predicate {}. Executing path scoring.",
@@ -84,8 +120,8 @@ public class ImportedFactChecker extends PathBasedFactChecker {
           return p;
         }
       }).filter(p -> scoreFilter.test(p.getScore())).collect(Collectors.toList());
-      LOGGER.debug("number of paths after filtering is {}",paths.size());
-      LOGGER.trace(" -------------  Filter and Score Done  -------------");
+      LOGGER.info("number of paths after filtering is {}",paths.size());
+      LOGGER.info(" -------------  Filter and Score Done  -------------");
 
       // Get the scores
       LOGGER.trace(" -------------  Start to get the scores  -------------");

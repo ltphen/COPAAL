@@ -40,6 +40,11 @@ public class QRestrictedPath implements IPieceOfEvidence {
   protected String verbalizedOutput;
 
   /**
+   * one path sample
+   */
+  protected String sample;
+
+  /**
    * Constructor.
    */
   public QRestrictedPath() {
@@ -106,6 +111,23 @@ public class QRestrictedPath implements IPieceOfEvidence {
   public void setVerbalizedOutput(String verbalizedOutput) {
     this.verbalizedOutput = verbalizedOutput;
   }
+
+  /**
+   * @return the sample
+   */
+  @Override
+  public String getSample() {
+    return sample;
+  }
+
+  /**
+   * @param sample the sample of a path
+   */
+  @Override
+  public void setSample(String sample) {
+    this.sample = sample;
+  }
+
 
   @Override
   public int hashCode() {
@@ -202,7 +224,7 @@ public class QRestrictedPath implements IPieceOfEvidence {
   public String toStringWithTag() {
     StringBuilder sb = new StringBuilder();
     for(Pair<Property, Boolean> p : pathElements){
-      if(p.getSecond()){
+      if(!p.getSecond()){
         sb.append("^");
       }
       sb.append("<");
@@ -220,12 +242,32 @@ public class QRestrictedPath implements IPieceOfEvidence {
       parts[i] = parts[i].replace("<","");
       if(parts[i].charAt(0) == '^'){
         parts[i] = parts[i].replace("^","");
-        temp.pathElements.add(new Pair<>(ResourceFactory.createProperty(parts[i]) , true));
+        temp.pathElements.add(new Pair<>(ResourceFactory.createProperty(parts[i]) , false));
       }else{
-        temp.pathElements.add(new Pair<>(ResourceFactory.createProperty(parts[i]), false));
+        temp.pathElements.add(new Pair<>(ResourceFactory.createProperty(parts[i]), true));
       }
     }
     return temp;
+  }
+
+  public String queryForGetAnExample(){
+    StringBuilder sb = new StringBuilder();
+    sb.append("select * where { ");
+    for(int i = 0 ; i < this.pathElements.size() ; i++){
+      Pair<Property, Boolean> current = this.pathElements.get(i);
+
+      String first = "?x" + i;
+      String second = "?x" + (i+1);
+
+      if(!current.getSecond()){
+        // is false swap first and second
+        first = "?x" + (i+1);
+        second = "?x" + i;
+      }
+      sb.append(first+" <"+ current.getFirst().getURI()+"> " + second+" . ");
+    }
+    sb.append(" } LIMIT 1");
+    return sb.toString();
   }
 
   public static QRestrictedPath create(Property properties[], boolean direction[]) {

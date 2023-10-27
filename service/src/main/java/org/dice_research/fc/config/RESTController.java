@@ -8,12 +8,20 @@ import org.apache.jena.rdf.model.ResourceFactory;
 import org.apache.jena.sparql.lang.sparql_11.ParseException;
 import org.dice_research.fc.IFactChecker;
 import org.dice_research.fc.data.FactCheckingResult;
+import org.dice_research.fc.paths.sampler.IPathSampler;
 import org.dice_research.fc.paths.verbalizer.IPathVerbalizer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationContext;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.CrossOrigin;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @CrossOrigin(origins = "*", allowCredentials = "true")
@@ -26,8 +34,8 @@ public class RESTController {
   private static final Logger LOGGER = LoggerFactory.getLogger(RESTController.class);
 
   @GetMapping("/test")
-  public String ping(){
-    return "OK!";
+  public ResponseEntity<String> ping(){
+    return ResponseEntity.status(HttpStatus.OK).body("OK!");
   }
 
   @RequestMapping("/error")
@@ -56,6 +64,11 @@ public class RESTController {
     // verbalize result
     IPathVerbalizer verbalizer = ctx.getBean(IPathVerbalizer.class, ctx.getBean(QueryExecutionFactory.class), details);
     verbalizer.verbalizeResult(result);
+
+    if(details.isPathWithSample()){
+      IPathSampler sampler = ctx.getBean(IPathSampler.class, ctx.getBean(QueryExecutionFactory.class), details);
+      sampler.gatherSample(result);
+    }
     return result;
   }
 

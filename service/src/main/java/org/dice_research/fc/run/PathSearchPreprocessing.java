@@ -1,6 +1,7 @@
 package org.dice_research.fc.run;
 
 import java.util.AbstractMap;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map.Entry;
@@ -22,6 +23,7 @@ import org.dice_research.fc.paths.scorer.count.max.DefaultMaxCounter;
 import org.dice_research.fc.paths.search.SPARQLBasedSOPathSearcher;
 import org.dice_research.fc.sparql.filter.EqualsFilter;
 import org.dice_research.fc.sparql.filter.NamespaceFilter;
+import org.dice_research.fc.sparql.query.ListBaseQueryValidator;
 import org.dice_research.fc.sparql.query.QueryExecutionFactoryCustomHttp;
 import org.dice_research.fc.sparql.query.QueryExecutionFactoryCustomHttpTimeout;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -37,7 +39,7 @@ public class PathSearchPreprocessing {
     // TODO Get the necessary parameters and start the preprocessing method
 
     QueryExecutionFactory qef =
-        new QueryExecutionFactoryCustomHttp("https://synthg-fact.dice-research.org/sparql",false,"json");// "https://dbpedia.org/sparql");
+        new QueryExecutionFactoryCustomHttp("https://synthg-fact.dice-research.org/sparql",false,"json",false,"","");// "https://dbpedia.org/sparql");
     qef = new QueryExecutionFactoryCustomHttpTimeout(qef, 30000);
 
     long seed = 123;
@@ -52,7 +54,7 @@ public class PathSearchPreprocessing {
                 Arrays.asList(filter,
                     new EqualsFilter(FILTERED_PROPERTIES))),
             new NPMIBasedScorer(
-                new CachingCountRetrieverDecorator(new ApproximatingCountRetriever(qef, new DefaultMaxCounter(qef)))));
+                new CachingCountRetrieverDecorator(new ApproximatingCountRetriever(qef, new DefaultMaxCounter(qef), new ListBaseQueryValidator(new ArrayList<>())))));
 
     // gets one of the most frequent predicates in the graph
     String property = "http://dbpedia.org/ontology/birthPlace";
